@@ -1,0 +1,126 @@
+name: run
+run-name: "${{ inputs.label != '' && inputs.label || format('{0}@{1}', inputs.repo, inputs.ref) }}"
+
+# Manually dispatched Linux job: check out any public repository at a ref,
+# optionally prepare it with a preset and a PostgreSQL 16 server, run the given
+# commands and keep the logs as an artifact. No secrets are used or exposed.
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Repository to check out (owner/name)"
+        required: true
+        type: string
+      ref:
+        description: "Branch, tag or commit"
+        required: true
+        type: string
+      command:
+        description: "Bash commands to run in the checkout"
+        required: true
+        type: string
+      preset:
+        description: "Setup preset"
+        type: choice
+        options: [none, python, openminion]
+        default: none
+      postgres:
+        description: "Start PostgreSQL 16 on localhost:5432 (user postgres, password test)"
+        type: boolean
+        default: false
+      python:
+        description: "Python version"
+        type: string
+        default: "3.11"
+      eval_branch:
+        description: "openminion preset: openminion-eval branch cloned into .deps"
+        type: string
+        default: "dev"
+      label:
+        description: "Run label (shown as the run name)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      INPUT_PRESET: ${{ inputs.preset }}
+      INPUT_COMMAND: ${{ inputs.command }}
+      INPUT_EVAL_BRANCH: ${{ inputs.eval_branch }}
+    steps:
+      - name: Check out target
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ inputs.python }}
+
+      - name: Start PostgreSQL 16
+        if: ${{ inputs.postgres }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name pg -p 5432:5432 -e POSTGRES_PASSWORD=test postgres:16
+          for _ in $(seq 1 30); do
+            if docker exec pg pg_isready -U postgres >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          docker exec pg pg_isready -U postgres
+          echo "OPENMINION_TEST_POSTGRES_URL=postgresql+psycopg://postgres:test@localhost:5432/postgres" >> "$GITHUB_ENV"
+
+      - name: Prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/logs" "$RUNNER_TEMP/home" "$RUNNER_TEMP/data"
+          {
+            echo "OPENMINION_HOME=$RUNNER_TEMP/home"
+            echo "OPENMINION_DATA_ROOT=$RUNNER_TEMP/data"
+          } >> "$GITHUB_ENV"
+          git log --oneline -1 | tee "$RUNNER_TEMP/logs/head.txt"
+          case "$INPUT_PRESET" in
+            openminion)
+              mkdir -p .deps
+              [[ -d .deps/openminion-eval ]] || git clone --depth 1 --branch "$INPUT_EVAL_BRANCH" https://github.com/openminion/openminion-eval .deps/openminion-eval
+              make dev-install 2>&1 | tee "$RUNNER_TEMP/logs/setup.log"
+              ;;
+            python)
+              python -m pip install --upgrade pip 2>&1 | tee "$RUNNER_TEMP/logs/setup.log"
+              if [[ -f pyproject.toml || -f setup.py ]]; then
+                python -m pip install -e ".[dev]" 2>&1 | tee -a "$RUNNER_TEMP/logs/setup.log" || python -m pip install -e . 2>&1 | tee -a "$RUNNER_TEMP/logs/setup.log"
+              fi
+              if [[ -f requirements.txt ]]; then
+                python -m pip install -r requirements.txt 2>&1 | tee -a "$RUNNER_TEMP/logs/setup.log"
+              fi
+              ;;
+            none) ;;
+          esac
+
+      - name: Run
+        shell: bash
+        run: |
+          set -o pipefail
+          start=$(date +%s)
+          bash -c "$INPUT_COMMAND" 2>&1 | tee "$RUNNER_TEMP/logs/run.log"
+          rc=${PIPESTATUS[0]}
+          echo "exit=$rc seconds=$(( $(date +%s) - start ))" | tee "$RUNNER_TEMP/logs/result.txt"
+          exit "$rc"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: logs
+          path: ${{ runner.temp }}/logs
+          retention-days: 7
