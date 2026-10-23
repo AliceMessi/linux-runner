@@ -18,7 +18,7 @@ Presets:
 - `python`: `pip install -e .[dev]`, falling back to `pip install -e .`, then `requirements.txt`.
 - `openminion`: clones `openminion-eval` into `.deps` (branch `dev` by default) and runs `make dev-install`, as OpenMinion's CI does.
 
-`--postgres` starts `postgres:16` on `localhost:5432` (user `postgres`, password `test`) and exports `OPENMINION_TEST_POSTGRES_URL`.
+`--postgres` starts `postgres:16` on `localhost:5432` (user `postgres`, password `test`) and exports `OPENMINION_TEST_POSTGRES_URL`. With the `openminion` preset it also installs the `postgres` extra (`psycopg`).
 
 ## Safety
 

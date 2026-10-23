@@ -52,6 +52,7 @@ jobs:
       INPUT_PRESET: ${{ inputs.preset }}
       INPUT_COMMAND: ${{ inputs.command }}
       INPUT_EVAL_BRANCH: ${{ inputs.eval_branch }}
+      INPUT_POSTGRES: ${{ inputs.postgres }}
     steps:
       - name: Check out target
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,6 +95,9 @@ jobs:
               mkdir -p .deps
               [[ -d .deps/openminion-eval ]] || git clone --depth 1 --branch "$INPUT_EVAL_BRANCH" https://github.com/openminion/openminion-eval .deps/openminion-eval
               make dev-install 2>&1 | tee "$RUNNER_TEMP/logs/setup.log"
+              if [[ "$INPUT_POSTGRES" == "true" ]]; then
+                .venv/bin/python3.11 -m pip install -e ".[dev,postgres]" 2>&1 | tee -a "$RUNNER_TEMP/logs/setup.log"
+              fi
               ;;
             python)
               python -m pip install --upgrade pip 2>&1 | tee "$RUNNER_TEMP/logs/setup.log"
@@ -110,7 +114,7 @@ jobs:
       - name: Run
         shell: bash
         run: |
-          set -o pipefail
+          set +e -o pipefail
           start=$(date +%s)
           bash -c "$INPUT_COMMAND" 2>&1 | tee "$RUNNER_TEMP/logs/run.log"
           rc=${PIPESTATUS[0]}
