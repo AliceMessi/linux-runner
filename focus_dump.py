@@ -2,7 +2,8 @@
 
 It changes no test and no assertion. It records, per PtySession, the harness
 actions (send, resize) with the length of the raw PTY output at that moment,
-and in PtySession.__exit__, after the test body has finished or raised, it
+and the start offset and size of every PTY read after the first resize; in
+PtySession.__exit__, after the test body has finished or raised, it
 saves the raw PTY output, the action log and the emulator's final screen and
 cursor for the resize test (every run) and for any failing session.
 """
@@ -27,6 +28,8 @@ def pytest_configure(config):  # noqa: ARG001
     original_send = cls.send
     original_resize = cls.resize
     original_exit = cls.__exit__
+    original_consume = cls._consume_output
+    resized: set[int] = set()
 
     def _log(session, entry):
         logs.setdefault(id(session), []).append(entry)
@@ -38,11 +41,17 @@ def pytest_configure(config):  # noqa: ARG001
     def resize(self, *, rows, cols):
         before = {"t": time.monotonic(), "op": "resize", "rows": rows, "cols": cols, "raw_len": len(self._transcript),
                   "cursor_before": [self._screen.cursor.y + 1, self._screen.cursor.x + 1]}
+        resized.add(id(self))
         result = original_resize(self, rows=rows, cols=cols)
         before["raw_len_after_0.1s_read"] = len(self._transcript)
         before["cursor_after_pyte_resize_and_read"] = [self._screen.cursor.y + 1, self._screen.cursor.x + 1]
         _log(self, before)
         return result
+
+    def _consume_output(self, chunk):
+        if id(self) in resized:
+            _log(self, {"t": time.monotonic(), "op": "chunk", "start": len(self._transcript), "bytes": len(chunk)})
+        return original_consume(self, chunk)
 
     def __exit__(self, *exc):
         try:
@@ -73,3 +82,4 @@ def pytest_configure(config):  # noqa: ARG001
     cls.send = send
     cls.resize = resize
     cls.__exit__ = __exit__
+    cls._consume_output = _consume_output

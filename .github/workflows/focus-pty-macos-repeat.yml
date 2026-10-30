@@ -16,7 +16,7 @@ permissions:
   contents: read
 
 env:
-  ITERATIONS: "8"
+  ITERATIONS: "10"
 
 jobs:
   repeat:
@@ -26,8 +26,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [pr535, pr534, dev]
-        shard: [1, 2, 3]
+        target: [dev]
+        shard: [1, 2, 3, 4, 5]
         include:
           - target: pr535
             repo: AliceMessi/openminion
